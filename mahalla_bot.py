@@ -11,6 +11,7 @@ Ishlash tartibi:
 
 Foydalanish:
   python mahalla_bot.py                 # asosiy ish (config.yaml bo'yicha)
+  python mahalla_bot.py --yozib_olish 2 # 2-qatordagi fuqaroni qo'lda kiritasiz, dastur qadamlarni yozadi
   python mahalla_bot.py --tanlash       # sahifadagi elementlar selektorini aniqlash rejimi
   python mahalla_bot.py --tekshir       # saqlashdan oldin har safar tasdiq so'raydi
   python mahalla_bot.py --qatorlar 2-10 # faqat 2..10-qatorlarni ishlash
@@ -111,46 +112,116 @@ def qatorlar_oraligi(matn: str | None):
 #  Excel bilan ishlash
 # --------------------------------------------------------------------------- #
 
+def ustun_harfi(n: int) -> str:
+    harf = ""
+    while n:
+        n, q = divmod(n - 1, 26)
+        harf = chr(65 + q) + harf
+    return harf
+
+
 class ExcelJadval:
+    """Manba Excel faqat o'qiladi (u o'zgarmaydi). Natijalar alohida kichik faylga yoziladi:
+    <fayl>_natija.xlsx — har qator uchun Holat. Katta fayllarda (100 000+ qator) ham tez ishlaydi."""
+
     def __init__(self, sozlama: dict):
         self.fayl = (BAZA / sozlama.get("fayl", "fuqarolar.xlsx")).resolve()
         if not self.fayl.exists():
             chiqar(f"Excel fayl topilmadi: {self.fayl}")
             sys.exit(1)
-        self.natija_fayl = (BAZA / sozlama["natija_fayl"]).resolve() if sozlama.get("natija_fayl") else self.fayl
+        natija = sozlama.get("natija_fayl") or f"{self.fayl.stem}_natija.xlsx"
+        self.natija_fayl = (self.fayl.parent / natija).resolve()
         self.sarlavha_qatori = int(sozlama.get("sarlavha_qatori", 1))
-        self.holat_nomi = sozlama.get("holat_ustuni", "Holat")
+        self.korsatish = list(sozlama.get("korsatish_ustunlari") or [])
+        self.filtr = sozlama.get("filtr") or {}
+        self.jshshir_ustuni = sozlama.get("jshshir_ustuni")
 
-        self.wb = load_workbook(self.fayl)
+        chiqar(f"Excel o'qilmoqda: {self.fayl.name} ...")
+        wb = load_workbook(self.fayl, read_only=True, data_only=True)
         varaq = sozlama.get("varaq")
-        self.ws = self.wb[varaq] if varaq else self.wb.active
+        ws = wb[varaq] if varaq else wb.worksheets[0]
 
-        self.ustunlar: dict[str, int] = {}
-        for katak in self.ws[self.sarlavha_qatori]:
-            if katak.value is not None and str(katak.value).strip():
-                self.ustunlar[str(katak.value).strip()] = katak.column
+        self.ustunlar: list[str] = []
+        self._qatorlar: list[tuple[int, dict]] = []
+        for r, qiymatlar in enumerate(ws.iter_rows(values_only=True), 1):
+            if r < self.sarlavha_qatori:
+                continue
+            if r == self.sarlavha_qatori:
+                self.ustunlar = [str(v).strip() if v not in (None, "") else ustun_harfi(i)
+                                 for i, v in enumerate(qiymatlar, 1)]
+                continue
+            if not self.ustunlar:  # sarlavha_qatori: 0 — sarlavha yo'q, ustunlar A, B, C ...
+                self.ustunlar = [ustun_harfi(i) for i in range(1, len(qiymatlar) + 1)]
+            if all(v is None or str(v).strip() == "" for v in qiymatlar):
+                continue
+            qator = dict(zip(self.ustunlar, qiymatlar))
+            self.hisoblash(qator)
+            if self.filtrdan_otadi(qator):
+                self._qatorlar.append((r, qator))
+        wb.close()
 
-        if self.holat_nomi not in self.ustunlar:
-            ustun = self.ws.max_column + 1
-            self.ws.cell(row=self.sarlavha_qatori, column=ustun, value=self.holat_nomi)
-            self.ustunlar[self.holat_nomi] = ustun
+        for nom in list(self.filtr) + self.korsatish:
+            if nom not in self.ustunlar:
+                chiqar(f"Diqqat: Excel'da '{nom}' ustuni yo'q. Bor ustunlar: {', '.join(self.ustunlar)}")
+
+        self.holatlar: dict[int, str] = {}
+        self._natija_ochish()
+
+    def hisoblash(self, qator: dict) -> None:
+        """JSHSHIR'dan qo'shimcha ustunlar: JINS (Erkak/Ayol). JSHSHIR 1-raqami: toq = erkak, juft = ayol."""
+        if not self.jshshir_ustuni:
+            return
+        j = qiymat_matnga(qator.get(self.jshshir_ustuni))
+        qator["JINS"] = ("Erkak" if int(j[0]) % 2 else "Ayol") if j[:1].isdigit() and j[0] != "0" else ""
+
+    def filtrdan_otadi(self, qator: dict) -> bool:
+        """filtr: {ustun: "matn"} yoki {ustun: ["matn1", "matn2"]} — ustunda shu matn bo'lsa (katta-kichik harf farqsiz)."""
+        for nom, kerak in self.filtr.items():
+            qiymat = qiymat_matnga(qator.get(nom)).upper()
+            variantlar = kerak if isinstance(kerak, list) else [kerak]
+            if not any(str(v).upper() in qiymat for v in variantlar):
+                return False
+        return True
+
+    def _natija_ochish(self) -> None:
+        from openpyxl import Workbook
+        sarlavha = ["Qator"] + self.korsatish + ["Holat", "Vaqt"]
+        if self.natija_fayl.exists():
+            self.nwb = load_workbook(self.natija_fayl)
+            self.nws = self.nwb.active
+            for qiymatlar in self.nws.iter_rows(min_row=2, values_only=True):
+                if qiymatlar and isinstance(qiymatlar[0], int):
+                    holat = qiymatlar[-2] if len(qiymatlar) >= 2 else ""
+                    self.holatlar[qiymatlar[0]] = str(holat or "")
+        else:
+            self.nwb = Workbook()
+            self.nws = self.nwb.active
+            self.nws.title = "Natija"
+            self.nws.append(sarlavha)
+        self._qator_joyi = {self.nws.cell(row=i, column=1).value: i for i in range(2, self.nws.max_row + 1)}
 
     def qatorlar(self):
-        """(qator_raqami, {ustun: qiymat}) juftliklarini qaytaradi; bo'sh qatorlar o'tkaziladi."""
-        for r in range(self.sarlavha_qatori + 1, self.ws.max_row + 1):
-            qator = {nom: self.ws.cell(row=r, column=c).value for nom, c in self.ustunlar.items()}
-            malumot = [v for k, v in qator.items() if k != self.holat_nomi]
-            if all(v is None or str(v).strip() == "" for v in malumot):
-                continue
-            yield r, qator
+        """(Excel qator raqami, {ustun: qiymat}) — filtrdan o'tgan, bo'sh bo'lmagan qatorlar."""
+        return list(self._qatorlar)
 
-    def holat_yoz(self, r: int, matn: str) -> None:
-        self.ws.cell(row=r, column=self.ustunlar[self.holat_nomi], value=matn)
+    def holat(self, r: int) -> str:
+        return self.holatlar.get(r, "")
+
+    def holat_yoz(self, r: int, qator: dict, matn: str) -> None:
+        self.holatlar[r] = matn
+        qiymatlar = [r] + [qiymat_matnga(qator.get(u)) for u in self.korsatish] + [matn, f"{dt.datetime.now():%Y-%m-%d %H:%M:%S}"]
+        joy = self._qator_joyi.get(r)
+        if joy is None:
+            self.nws.append(qiymatlar)
+            self._qator_joyi[r] = self.nws.max_row
+        else:
+            for c, v in enumerate(qiymatlar, 1):
+                self.nws.cell(row=joy, column=c, value=v)
         self.saqlash()
 
     def saqlash(self) -> None:
         try:
-            self.wb.save(self.natija_fayl)
+            self.nwb.save(self.natija_fayl)
         except PermissionError:
             chiqar(f"  ! {self.natija_fayl.name} saqlanmadi: fayl Excel'da ochiq bo'lsa, yoping.")
 
@@ -166,7 +237,7 @@ def brauzer_ochish(pw, sozlama: dict):
         user_data_dir=str(profil),
         headless=bool(sozlama.get("yashirin", False)),
         viewport=None,
-        args=["--start-maximized"],
+        args=["--start-maximized"] + list(sozlama.get("qoshimcha_args", [])),
         slow_mo=int(sozlama.get("sekinlashtirish_ms", 0)),
     )
     kanal = sozlama.get("kanal", "chrome")
@@ -448,6 +519,180 @@ def tanlash_rejimi(context, boshlash_url: str) -> None:
 
 
 # --------------------------------------------------------------------------- #
+#  Yozib olish rejimi: siz bitta fuqaroni qo'lda kiritasiz — dastur qadamlarni yozadi
+# --------------------------------------------------------------------------- #
+
+YOZISH_JS = TANLASH_JS.split("document.addEventListener('click'")[0].replace("__selTanlash", "__selYozish") + r"""
+  const yubor = (d) => { try { window.__qadamYozildi(Object.assign({url: location.href}, d)); } catch (e) {} };
+  const matnOl = el => (el.innerText || el.value || el.getAttribute('aria-label') || '').trim().replace(/\s+/g, ' ').slice(0, 80);
+  document.addEventListener('change', (ev) => {
+    const el = ev.target; const tag = el.tagName.toLowerCase();
+    if (tag === 'select') {
+      const opt = el.options[el.selectedIndex];
+      yubor({tur: 'tanlash', css: yol(el), qiymat: opt ? opt.text.trim() : el.value});
+    } else if (el.type === 'checkbox' || el.type === 'radio') {
+      yubor({tur: 'belgilash', css: yol(el), qiymat: el.checked ? 'ha' : 'yoq'});
+    } else if (el.type === 'file') {
+      yubor({tur: 'fayl', css: yol(el), qiymat: ''});
+    } else if (tag === 'input' || tag === 'textarea') {
+      yubor({tur: 'yozish', css: yol(el), qiymat: el.value});
+    }
+  }, true);
+  document.addEventListener('click', (ev) => {
+    let el = ev.target;
+    const tag = el.tagName.toLowerCase();
+    if (['input', 'textarea', 'select', 'option'].includes(tag) && !['submit', 'button'].includes(el.type)) return;
+    const tugma = el.closest('button, a, [role="button"], [role="option"], li');
+    if (tugma) el = tugma;
+    yubor({tur: 'bosish', css: yol(el), tag: el.tagName.toLowerCase(), matn: matnOl(el)});
+  }, true);
+})();
+"""
+
+
+def _norm(v) -> str:
+    return re.sub(r"\s+", " ", qiymat_matnga(v)).strip().upper()
+
+
+def ustun_top(qiymat: str, qator: dict) -> str | None:
+    """Kiritilgan qiymat namuna qatordagi qaysi ustunga teng ekanini topadi."""
+    q = _norm(qiymat)
+    if not q:
+        return None
+    for nom, v in qator.items():
+        if _norm(v) == q:
+            return nom
+    return None
+
+
+def hodisalardan_qadamlar(hodisalar: list[dict], qator: dict, boshlash_url: str) -> list[dict]:
+    qadamlar: list[dict] = [{"amal": "ochish", "url": boshlash_url}] if boshlash_url else []
+    for h in hodisalar:
+        tur = h["tur"]
+        if tur == "yozish":
+            # Bir maydonga bir necha marta yozilgan bo'lsa, oxirgisi qoladi
+            if qadamlar and qadamlar[-1].get("amal") == "yozish" and qadamlar[-1]["selector"] == h["css"]:
+                qadamlar.pop()
+            q = {"amal": "yozish", "selector": h["css"]}
+            ustun = ustun_top(h["qiymat"], qator)
+            if ustun:
+                q["ustun"] = ustun
+            else:
+                q["qiymat"] = h["qiymat"]
+            qadamlar.append(q)
+        elif tur in ("tanlash", "belgilash"):
+            q = {"amal": tur, "selector": h["css"]}
+            ustun = ustun_top(h["qiymat"], qator) if tur == "tanlash" else None
+            if ustun:
+                q["ustun"] = ustun
+            elif tur == "tanlash":
+                q["qiymat"] = h["qiymat"]
+            qadamlar.append(q)
+        elif tur == "fayl":
+            qadamlar.append({"amal": "fayl", "selector": h["css"], "qiymat": "FAYL_YOLINI_YOZING"})
+        elif tur == "bosish":
+            ustun = ustun_top(h.get("matn", ""), qator)
+            if ustun:
+                # Excel qiymatiga teng variant bosildi — bu ochiluvchi ro'yxat.
+                # Oldin: [ro'yxatni ochish bosildi] + [ixtiyoriy: qidiruv maydoniga yozildi]
+                qidiruv = qadamlar.pop() if qadamlar and qadamlar[-1]["amal"] == "yozish" else None
+                q = {"amal": "royxat", "ustun": ustun, "variant_selector": h.get("tag") or "li"}
+                if qadamlar and qadamlar[-1]["amal"] == "bosish" and not qadamlar[-1].get("saqlash"):
+                    q["selector"] = qadamlar.pop()["selector"]
+                    if qidiruv:
+                        q["qidiruv_selector"] = qidiruv["selector"]
+                    qadamlar.append(q)
+                    continue
+                if qidiruv:  # avtoto'ldiriladigan maydon: yozib, variantni tanlash
+                    q["selector"] = qidiruv["selector"]
+                    q["yozib_qidirish"] = True
+                    qadamlar.append(q)
+                    continue
+            q = {"amal": "bosish", "selector": h["css"]}
+            matn = h.get("matn", "")
+            if matn and len(matn) <= 40 and h.get("tag") in ("button", "a") and "\n" not in matn:
+                q["selector"] = f"text={matn}"
+            q["izoh"] = matn[:40] if matn else h.get("tag", "")
+            if re.search(r"saqla|сохран|save|yubor|отправ|tasdiq|qo'sh|добав", matn, re.IGNORECASE):
+                q["saqlash"] = True
+            qadamlar.append(q)
+    return qadamlar
+
+
+def yozib_olish_rejimi(context, cfg: dict, cfg_yol: Path, namuna_r: int) -> None:
+    import threading
+
+    jadval = ExcelJadval(cfg.get("excel", {}))
+    qatorlar = dict(jadval.qatorlar())
+    if namuna_r not in qatorlar:
+        bor = list(qatorlar)[:10]
+        chiqar(f"{namuna_r}-qator topilmadi (filtrni tekshiring). Mavjud qatorlar: {bor} ...")
+        return
+    qator = qatorlar[namuna_r]
+
+    hodisalar: list[dict] = []
+
+    def yozildi(_source, h):
+        hodisalar.append(h)
+        korinish = h.get("qiymat") if h["tur"] != "bosish" else h.get("matn")
+        ustun = ustun_top(korinish or "", qator)
+        chiqar(f"  + {h['tur']:9} {str(korinish)[:40]!r}" + (f"  -> Excel ustuni: {ustun}" if ustun else ""))
+
+    context.expose_binding("__qadamYozildi", yozildi)
+    context.add_init_script(YOZISH_JS)
+    page = joriy_sahifa(context)
+    sayt = cfg.get("sayt", {})
+    if sayt.get("kirish_url"):
+        page.goto(sayt["kirish_url"], wait_until="domcontentloaded")
+
+    chiqar("=" * 60)
+    chiqar("YOZIB OLISH REJIMI")
+    chiqar(f"Namuna — Excel'ning {namuna_r}-qatori:")
+    for nom, v in qator.items():
+        if v not in (None, ""):
+            chiqar(f"    {nom:25} {qiymat_matnga(v)}")
+    chiqar("")
+    chiqar("1) Saytga kiring va fuqaro qo'shiladigan sahifani oching.")
+    input("2) Tayyor bo'lgach shu oynada Enter bosing — yozish boshlanadi... ")
+    boshlash_url = joriy_sahifa(context).url
+    for p in context.pages:
+        try:
+            p.evaluate(YOZISH_JS)
+        except PWError:
+            pass
+    chiqar("3) Endi shu fuqaroni QO'LDA kiriting: maydonlarni to'ldiring, ro'yxatlardan tanlang, Saqlash'ni bosing.")
+    chiqar("   Qiymatlarni yuqoridagi Excel qiymatlari bilan AYNAN bir xil yozing — dastur ularni ustunlarga bog'laydi.")
+    chiqar("4) Tugatgach, shu oynada Enter bosing.")
+    chiqar("-" * 60)
+
+    tugadi = threading.Event()
+    threading.Thread(target=lambda: (input(), tugadi.set()), daemon=True).start()
+    while not tugadi.is_set() and context.pages:
+        try:
+            context.pages[0].wait_for_timeout(200)
+        except PWError:
+            break
+
+    qadamlar = hodisalardan_qadamlar(hodisalar, qator, boshlash_url)
+    if not qadamlar:
+        chiqar("Hech qanday harakat yozilmadi.")
+        return
+    yangi = dict(cfg)
+    yangi.setdefault("sayt", {})["kirish_url"] = boshlash_url
+    yangi["qadamlar"] = qadamlar
+    chiqish = cfg_yol.with_name(cfg_yol.stem + "_yozilgan.yaml")
+    with open(chiqish, "w", encoding="utf-8") as f:
+        f.write("# --yozib_olish rejimida avtomatik yaratildi. Tekshirib chiqing, so'ng config.yaml nomi bilan saqlang\n")
+        f.write("# yoki:  python mahalla_bot.py --config " + chiqish.name + "\n")
+        yaml.safe_dump(yangi, f, allow_unicode=True, sort_keys=False, width=200)
+    chiqar("=" * 60)
+    chiqar(f"{len(qadamlar)} ta qadam yozildi: {chiqish}")
+    bog = sum(1 for q in qadamlar if "ustun" in q)
+    chiqar(f"Shundan {bog} tasi Excel ustunlariga bog'landi. Doimiy (qiymat:) qadamlarni tekshirib chiqing.")
+    chiqar("Sinash:  python mahalla_bot.py --config " + chiqish.name + " --tekshir --qatorlar " + str(namuna_r + 1))
+
+
+# --------------------------------------------------------------------------- #
 #  Asosiy jarayon
 # --------------------------------------------------------------------------- #
 
@@ -458,9 +703,12 @@ def asosiy() -> None:
     ap.add_argument("--tekshir", action="store_true", help="saqlashdan oldin tasdiq so'rash")
     ap.add_argument("--qatorlar", help="faqat shu Excel qatorlari, masalan: 2-10,15")
     ap.add_argument("--hammasi", action="store_true", help="OK bo'lgan qatorlarni ham qayta kiritish")
+    ap.add_argument("--yozib_olish", type=int, metavar="QATOR",
+                    help="shu Excel qatoridagi fuqaroni qo'lda kiritasiz, dastur qadamlarni yozib oladi")
     args = ap.parse_args()
 
-    cfg = config_oqish((BAZA / args.config).resolve())
+    cfg_yol = (BAZA / args.config).resolve()
+    cfg = config_oqish(cfg_yol)
     sayt = cfg.get("sayt", {})
     brauzer_cfg = cfg.get("brauzer", {})
 
@@ -469,6 +717,9 @@ def asosiy() -> None:
 
         if args.tanlash:
             tanlash_rejimi(context, sayt.get("kirish_url", ""))
+            return
+        if args.yozib_olish:
+            yozib_olish_rejimi(context, cfg, cfg_yol, args.yozib_olish)
             return
 
         jadval = ExcelJadval(cfg.get("excel", {}))
@@ -489,30 +740,30 @@ def asosiy() -> None:
         xato_skrin = BAZA / "xatolar"
         ok = xato = otkaz = 0
 
-        barcha = list(jadval.qatorlar())
-        chiqar(f"Excel'da {len(barcha)} ta qator topildi. Boshlandi...")
+        barcha = jadval.qatorlar()
+        filtr_izoh = " (filtr bo'yicha)" if jadval.filtr else ""
+        chiqar(f"Excel'da {len(barcha)} ta qator topildi{filtr_izoh}. Boshlandi...")
         bajaruvchi = Bajaruvchi(context, brauzer_cfg, args.tekshir)
 
         try:
             for n, (r, qator) in enumerate(barcha, 1):
                 if tanlangan and r not in tanlangan:
                     continue
-                holat = str(qator.get(jadval.holat_nomi) or "")
-                if holat.startswith("OK") and not args.hammasi:
+                if jadval.holat(r).startswith("OK") and not args.hammasi:
                     otkaz += 1
                     continue
 
-                nom = " ".join(qiymat_matnga(qator.get(u)) for u in cfg.get("excel", {}).get("korsatish_ustunlari", []))
+                nom = " ".join(qiymat_matnga(qator.get(u)) for u in jadval.korsatish)
                 chiqar(f"[{n}/{len(barcha)}] {r}-qator {nom}".rstrip())
                 try:
                     bajaruvchi.bajar(qadamlar, qator)
-                    jadval.holat_yoz(r, f"OK {dt.datetime.now():%Y-%m-%d %H:%M}")
+                    jadval.holat_yoz(r, qator, "OK")
                     ok += 1
                     chiqar("    ✔ kiritildi")
                 except Exception as e:
                     xato += 1
                     xabar = str(e).splitlines()[0][:300]
-                    jadval.holat_yoz(r, f"XATO: {xabar}")
+                    jadval.holat_yoz(r, qator, f"XATO: {xabar}")
                     chiqar(f"    ✖ {xabar}")
                     try:
                         xato_skrin.mkdir(exist_ok=True)

@@ -5,16 +5,28 @@
 # =====================================================================
 
 sayt:
-  # Dastur ochganda birinchi kiradigan manzil (saytning haqiqiy manzilini yozing)
-  kirish_url: "https://online-mahalla.uz"
+  # Dastur ochganda birinchi kiradigan manzil
+  kirish_url: "https://online-mahalla.uz/forms/survey_homes/10090563?obl_id=33&area_id=3306&district_id=3306020&street_id=330600447"
 
 excel:
-  fayl: "fuqarolar.xlsx"        # ma'lumotlar fayli (dastur papkasida)
-  varaq: null                   # varaq nomi; null = birinchi/faol varaq
-  sarlavha_qatori: 1            # ustun nomlari qaysi qatorda
-  holat_ustuni: "Holat"         # natija yoziladigan ustun (yo'q bo'lsa qo'shiladi)
-  natija_fayl: null             # null = shu faylning o'ziga yoziladi
-  korsatish_ustunlari: ["Familiya", "Ism"]   # ekranda ko'rsatish uchun
+  fayl: "Yangi_Pasport_Stol_4_5.xlsx"   # ma'lumotlar fayli (dastur papkasida). Bu fayl o'zgartirilmaydi.
+  varaq: "Лист1"                        # varaq nomi; null = birinchi varaq
+  sarlavha_qatori: 1                    # ustun nomlari qaysi qatorda (0 = sarlavha yo'q, ustunlar A, B, C...)
+  natija_fayl: null                     # null = "<fayl>_natija.xlsx" — har bir qator holati (OK / XATO) shu yerga yoziladi
+  korsatish_ustunlari: ["TV_SURNAMELATIN", "TV_NAMELATIN", "TV_PINPP"]   # ekranda va natija faylida ko'rsatish uchun
+  jshshir_ustuni: "TV_PINPP"            # shundan "JINS" ustuni hisoblanadi (Erkak / Ayol)
+
+  # Faqat kerakli fuqarolarni olish (faylda butun tuman bor — 124 000+ qator).
+  # Ustunda shu matn bo'lsa olinadi (katta-kichik harf farqi yo'q). Bir necha variant: ["a", "b"]
+  # filtr:
+  #   TV_ALP_ADDRESS: "Г.ГУЛОМ"
+  #   TV_ALP_CADASTRE: "22:10:01:01:01:0011"
+
+# Excel ustunlari (Лист1):
+#   TV_PINPP (JSHSHIR), TV_SURNAMECIRILLIC, TV_NAMECIRILLIC, TV_PATRONYMCIRILLIC,
+#   TV_SURNAMELATIN, TV_NAMELATIN, TV_PATRONYMLATIN, TV_DATEBIRTH, TV_BIRTHPLACELATIN,
+#   TV_SERIALNUMBER (pasport), TV_ALP_CADASTRE, TV_ALP_ADDRESS, TV_REGISTRATIONDATE,
+#   JINS (dastur hisoblaydi)
 
 brauzer:
   kanal: "chrome"               # kompyuterdagi Google Chrome; "msedge" ham bo'ladi
@@ -56,79 +68,54 @@ brauzer:
 #
 #  Selektor: CSS (#id, input[name="x"]), XPath (//button[...]) yoki text=Saqlash
 #
-#  QUYIDAGILAR — NAMUNA. Selektorlarni --tanlash rejimida aniqlab almashtiring!
+#  QUYIDAGILAR — NAMUNA. Eng oson yo'li — yozib olish rejimi:
+#      python mahalla_bot.py --yozib_olish 2
+#  (bitta fuqaroni qo'lda kiritasiz, dastur config_yozilgan.yaml ni o'zi yaratadi)
 # =====================================================================
 
 qadamlar:
-  # 1) Yangi fuqaro qo'shish formasini ochish
+  # 1) Forma sahifasini ochish
   - amal: ochish
-    url: "https://online-mahalla.uz/citizens/create"
+    url: "https://online-mahalla.uz/forms/survey_homes/10090563?obl_id=33&area_id=3306&district_id=3306020&street_id=330600447"
 
-  # yoki ro'yxat sahifasida "Qo'shish" tugmasini bosish:
-  # - amal: bosish
-  #   selector: "text=Qo'shish"
-
-  - amal: kutish
-    selector: "input[name='lastName']"
-
-  # 2) Maydonlarni to'ldirish
-  - amal: yozish
-    selector: "input[name='lastName']"
-    ustun: "Familiya"
-
-  - amal: yozish
-    selector: "input[name='firstName']"
-    ustun: "Ism"
-
-  - amal: yozish
-    selector: "input[name='middleName']"
-    ustun: "Otasining ismi"
-
-  - amal: yozish
-    selector: "input[name='birthDate']"
-    ustun: "Tug'ilgan sana"
-    format: "%d.%m.%Y"
-    sekin: true
-
+  # 2) Maydonlarni to'ldirish (selektorlar — taxminiy, yozib olish rejimida aniqlanadi)
   - amal: yozish
     selector: "input[name='pinfl']"
-    ustun: "JSHSHIR"
+    ustun: "TV_PINPP"
 
   - amal: yozish
     selector: "input[name='passport']"
-    ustun: "Pasport"
+    ustun: "TV_SERIALNUMBER"
+
+  - amal: yozish
+    selector: "input[name='lastName']"
+    ustun: "TV_SURNAMELATIN"
+
+  - amal: yozish
+    selector: "input[name='firstName']"
+    ustun: "TV_NAMELATIN"
+
+  - amal: yozish
+    selector: "input[name='middleName']"
+    ustun: "TV_PATRONYMLATIN"
+
+  - amal: yozish
+    selector: "input[name='birthDate']"
+    ustun: "TV_DATEBIRTH"
+    sekin: true
 
   - amal: tanlash
     selector: "select[name='gender']"
-    ustun: "Jinsi"
-    almashtirish: {"E": "Erkak", "A": "Ayol"}
-
-  - amal: yozish
-    selector: "input[name='phone']"
-    ustun: "Telefon"
-    sekin: true
-    majburiy: false
-
-  - amal: royxat
-    selector: "#street"
-    ustun: "Ko'cha"
-    yozib_qidirish: true
-    variant_selector: "li"          # variantlar elementi; matni Excel qiymatiga teng bo'lgani bosiladi
-
-  - amal: yozish
-    selector: "input[name='house']"
-    ustun: "Uy raqami"
+    ustun: "JINS"
+    # saytda boshqacha yozilgan bo'lsa:  almashtirish: {"Erkak": "Эркак", "Ayol": "Аёл"}
 
   # 3) Saqlash
   - amal: bosish
-    selector: "button[type='submit']"
+    selector: "text=Saqlash"
     saqlash: true
 
-  # 4) Natijani tekshirish: xato xabari chiqsa — XATO, muvaffaqiyat xabarini kutish
+  # 4) Natijani tekshirish: xato xabari chiqsa — XATO
   - amal: pauza
     soniya: 1
   - amal: tekshirish
-    selector: ".error-message, .alert-danger, .ant-message-error"
-  - amal: kutish
-    selector: "text=muvaffaqiyatli"
-    majburiy: false
+    selector: ".error-message, .alert-danger, .ant-message-error, .invalid-feedback"

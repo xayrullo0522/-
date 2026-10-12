@@ -2,8 +2,8 @@
 
 Bu dastur Excel'dagi fuqarolar ma'lumotlarini saytga **avtomatik** kiritadi:
 brauzerni ochadi, siz saytga kirasiz, keyin dastur har bir qator uchun formani ochib,
-maydonlarni to'ldirib, "Saqlash"ni bosadi. Har bir qator natijasi Excel'ning
-**Holat** ustuniga yoziladi (`OK` yoki `XATO: sababi`).
+maydonlarni to'ldirib, "Saqlash"ni bosadi. Har bir qator natijasi alohida
+`..._natija.xlsx` fayliga yoziladi (`OK` yoki `XATO: sababi`).
 
 Dastur saytning o'ziga bog'lanmagan: qaysi maydonga nima yozilishi `config.yaml`
 faylida sozlanadi. Shuning uchun Online Mahalla'da yoki boshqa istalgan saytda ishlaydi.
@@ -14,32 +14,35 @@ faylida sozlanadi. Shuning uchun Online Mahalla'da yoki boshqa istalgan saytda i
 
 1. **Python** o'rnating: https://www.python.org/downloads/
    (o'rnatishda **"Add Python to PATH"** belgisini qo'yishni unutmang).
-2. Shu papkadagi **`1_ornatish.bat`** ni ikki marta bosing.
-   U kerakli kutubxonalarni o'rnatadi va namuna `fuqarolar.xlsx` yaratadi.
+2. Shu papkadagi **`1_ornatish.bat`** ni ikki marta bosing — kerakli kutubxonalar o'rnatiladi.
 
 Kompyuterda Google Chrome bo'lsa, dastur o'shani ishlatadi.
 
-## 2. Excel faylini tayyorlash
+## 2. Excel faylini qo'yish
 
-- Faylni shu papkaga `fuqarolar.xlsx` nomi bilan qo'ying (yoki `config.yaml`da nomini o'zgartiring).
-- **1-qator — ustun nomlari** (Familiya, Ism, Tug'ilgan sana, JSHSHIR, ...).
-- Ustun nomlari `config.yaml` dagi `ustun:` qiymatlari bilan **aynan bir xil** bo'lishi kerak.
+- `Yangi_Pasport_Stol_4_5.xlsx` faylini shu papkaga qo'ying (boshqa nom bo'lsa — `config.yaml` da `fayl:` ni o'zgartiring).
+- Dastur bu faylni **o'zgartirmaydi**. Natijalar alohida `Yangi_Pasport_Stol_4_5_natija.xlsx` fayliga yoziladi
+  (qator raqami, F.I.Sh, JSHSHIR, `OK` yoki `XATO: sababi`).
+- Faylda butun tuman (124 000+ fuqaro) bor. Faqat kerakli ko'cha/uylarni olish uchun `config.yaml` da `filtr:` ni yoqing:
+  ```yaml
+    filtr:
+      TV_ALP_ADDRESS: "Г.ГУЛОМ"
+  ```
+- `JINS` ustuni JSHSHIR'dan avtomatik hisoblanadi (Erkak / Ayol).
 
-## 3. Saytdagi maydonlarni aniqlash (bir marta)
+## 3. Saytni "o'rgatish" — yozib olish (bir marta)
 
-Har bir saytning maydonlari turlicha nomlangan. Ularni aniqlash uchun:
+1. **`2_yozib_olish.bat`** ni ishga tushiring, Excel qator raqamini kiriting (masalan `2`).
+2. Qora oynada shu fuqaroning ma'lumotlari chiqadi. Brauzerda saytga kiring va forma sahifasini oching, so'ng **Enter** bosing.
+3. Shu fuqaroni saytga **qo'lda** kiriting: maydonlarni to'ldiring, ro'yxatlardan tanlang, **Saqlash**ni bosing.
+   Qiymatlarni Excel'dagidek **aynan bir xil** yozing (masalan `IBRAIMOVA`, `15.07.1960`) —
+   shunda dastur har bir maydonni qaysi Excel ustunidan olishni o'zi tushunadi.
+4. Tugagach, qora oynada **Enter** bosing. `config_yozilgan.yaml` fayli yaratiladi.
+5. Faylni tekshirib chiqing (Bloknot bilan oching): `ustun:` bog'lanmagan joylarda `qiymat:` turadi —
+   kerak bo'lsa tuzating. So'ng uni **`config.yaml`** nomi bilan saqlang (eskisining o'rniga).
 
-1. **`2_selektor_aniqlash.bat`** ni ishga tushiring.
-2. Ochilgan brauzerda saytga kiring va fuqaro qo'shish formasini oching.
-3. Klaviaturada **ALT** ni bosib turib, kerakli maydonga **sichqoncha bilan bosing**.
-4. Qora oynada tayyor qator chiqadi, masalan:
-   ```yaml
-     - amal: yozish
-       selector: 'input[name="lastName"]'
-   ```
-5. Shu qatorni `config.yaml` ning `qadamlar:` bo'limiga ko'chirib, `ustun: "Familiya"` qo'shing.
-
-Shu tarzda har bir maydon, ochiluvchi ro'yxat va "Saqlash" tugmasini aniqlab chiqasiz.
+> Qaysidir maydon to'g'ri yozilmasa — **`5_selektor_aniqlash.bat`**: ALT bosib turib maydonga bosing,
+> qora oynada uning selektori chiqadi.
 
 ## 4. Sinab ko'rish
 
@@ -48,7 +51,7 @@ saqlashdan oldin sizdan so'raydi. Avval 1–2 ta fuqaroda shunday tekshirib ko'r
 
 Faqat ayrim qatorlarni ishlash:
 ```
-python mahalla_bot.py --tekshir --qatorlar 2-3
+python mahalla_bot.py --tekshir --qatorlar 3-4
 ```
 
 ## 5. Asosiy ish
@@ -61,7 +64,7 @@ python mahalla_bot.py --tekshir --qatorlar 2-3
 - Xato bo'lgan qatorlar rasmi `xatolar/` papkasiga saqlanadi.
 - Login `brauzer_profil/` papkasida saqlanib qoladi, har safar qayta kirish shart bo'lmasligi mumkin.
 
-> ⚠️ Ishlayotganda Excel faylini **yopib qo'ying**, aks holda natija yozilmaydi.
+> ⚠️ Ishlayotganda `..._natija.xlsx` faylini **yopib qo'ying**, aks holda natija yozilmaydi.
 
 ---
 
