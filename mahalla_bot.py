@@ -230,23 +230,54 @@ class ExcelJadval:
 #  Brauzer bilan ishlash
 # --------------------------------------------------------------------------- #
 
-def brauzer_ochish(pw, sozlama: dict):
-    profil = (BAZA / sozlama.get("profil_papkasi", "brauzer_profil")).resolve()
-    profil.mkdir(parents=True, exist_ok=True)
-    umumiy = dict(
-        user_data_dir=str(profil),
-        headless=bool(sozlama.get("yashirin", False)),
-        viewport=None,
-        args=["--start-maximized"] + list(sozlama.get("qoshimcha_args", [])),
-        slow_mo=int(sozlama.get("sekinlashtirish_ms", 0)),
-    )
-    kanal = sozlama.get("kanal", "chrome")
-    if kanal:
+def _ishga_tushir(pw, kanal, umumiy: dict):
+    """Brauzerni ochadi va haqiqatan ishlayotganini tekshiradi (darhol yopilib qolmadimi)."""
+    context = pw.chromium.launch_persistent_context(channel=kanal, **umumiy) if kanal \
+        else pw.chromium.launch_persistent_context(**umumiy)
+    try:
+        time.sleep(1)
+        sahifa = context.pages[0] if context.pages else context.new_page()
+        sahifa.evaluate("1")
+        return context
+    except PWError:
         try:
-            return pw.chromium.launch_persistent_context(channel=kanal, **umumiy)
+            context.close()
         except PWError:
-            chiqar(f"'{kanal}' brauzeri topilmadi, Playwright Chromium ishlatiladi.")
-    return pw.chromium.launch_persistent_context(**umumiy)
+            pass
+        raise
+
+
+def brauzer_ochish(pw, sozlama: dict):
+    asosiy_profil = (BAZA / sozlama.get("profil_papkasi", "brauzer_profil")).resolve()
+    kanal = sozlama.get("kanal", "chrome")
+    kanallar = [kanal, None] if kanal else [None]
+    oxirgi_xato = None
+    # Profil band bo'lsa (avvalgi oyna ochiq qolgan) — keyingi zaxira profil bilan ochamiz
+    for n in range(4):
+        profil = asosiy_profil if n == 0 else asosiy_profil.with_name(f"{asosiy_profil.name}_{n + 1}")
+        profil.mkdir(parents=True, exist_ok=True)
+        umumiy = dict(
+            user_data_dir=str(profil),
+            headless=bool(sozlama.get("yashirin", False)),
+            viewport=None,
+            args=["--start-maximized"] + list(sozlama.get("qoshimcha_args", [])),
+            slow_mo=int(sozlama.get("sekinlashtirish_ms", 0)),
+        )
+        for k in kanallar:
+            try:
+                context = _ishga_tushir(pw, k, umumiy)
+                if n:
+                    chiqar(f"Diqqat: '{asosiy_profil.name}' band edi (avvalgi brauzer oynasi ochiq qolgandir),"
+                           f" '{profil.name}' profili ishlatildi — saytga qaytadan kirish kerak bo'lishi mumkin.")
+                if k != kanal:
+                    chiqar(f"'{kanal}' ochilmadi, Playwright Chromium ishlatildi.")
+                return context
+            except PWError as e:
+                oxirgi_xato = e
+    chiqar("Brauzer ochilmadi. Barcha Chrome oynalarini yoping va qaytadan urinib ko'ring.")
+    chiqar(f"Xato: {str(oxirgi_xato).splitlines()[0] if oxirgi_xato else ''}")
+    chiqar("Agar 'Executable doesn't exist' deyilsa:  python -m playwright install chromium")
+    sys.exit(1)
 
 
 def joriy_sahifa(context):
@@ -741,8 +772,7 @@ def _enter_kutish(context) -> None:
         pass
 
 
-def yozib_olish_rejimi(context, cfg: dict, cfg_yol: Path, namuna_r: int) -> None:
-    jadval = ExcelJadval(cfg.get("excel", {}))
+def yozib_olish_rejimi(context, cfg: dict, cfg_yol: Path, namuna_r: int, jadval: "ExcelJadval") -> None:
     qatorlar = dict(jadval.qatorlar())
     guruh = cfg.get("guruhlash") or {}
     royxat_url = guruh.get("royxat_url")
@@ -869,6 +899,15 @@ def asosiy() -> None:
     sayt = cfg.get("sayt", {})
     brauzer_cfg = cfg.get("brauzer", {})
 
+    # Excel brauzerdan OLDIN o'qiladi (katta fayl uzoq o'qiladi — brauzer bo'sh turib qolmasin)
+    jadval = None if args.tanlash else ExcelJadval(cfg.get("excel", {}))
+    qadamlar = cfg.get("qadamlar") or []
+    if not args.tanlash and args.yozib_olish is None and not qadamlar:
+        chiqar("config.yaml da 'qadamlar' bo'limi bo'sh.")
+        return
+    if jadval is not None:
+        chiqar(f"Excel o'qildi. Brauzer ochilmoqda... (brauzer oynasini yopmang)")
+
     with sync_playwright() as pw:
         context = brauzer_ochish(pw, brauzer_cfg)
 
@@ -876,13 +915,7 @@ def asosiy() -> None:
             tanlash_rejimi(context, sayt.get("kirish_url", ""))
             return
         if args.yozib_olish is not None:
-            yozib_olish_rejimi(context, cfg, cfg_yol, args.yozib_olish)
-            return
-
-        jadval = ExcelJadval(cfg.get("excel", {}))
-        qadamlar = cfg.get("qadamlar") or []
-        if not qadamlar:
-            chiqar("config.yaml da 'qadamlar' bo'limi bo'sh.")
+            yozib_olish_rejimi(context, cfg, cfg_yol, args.yozib_olish, jadval)
             return
 
         page = joriy_sahifa(context)
@@ -1013,4 +1046,17 @@ def asosiy() -> None:
 
 
 if __name__ == "__main__":
-    asosiy()
+    try:
+        asosiy()
+    except KeyboardInterrupt:
+        chiqar("\nTo'xtatildi.")
+    except PWError as e:
+        chiqar("=" * 60)
+        if "closed" in str(e).lower():
+            chiqar("Brauzer yopilib qoldi. Sabablari:")
+            chiqar("  - dastur ishlayotganda brauzer oynasi yopildi;")
+            chiqar("  - avvalgi ishga tushirishdan qolgan brauzer oynasi ochiq (uni yoping).")
+            chiqar("Barcha shu dastur ochgan Chrome oynalarini yoping va qaytadan ishga tushiring.")
+        else:
+            chiqar(f"Brauzer xatosi: {str(e).splitlines()[0]}")
+        sys.exit(1)
