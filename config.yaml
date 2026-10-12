@@ -6,7 +6,28 @@
 
 sayt:
   # Dastur ochganda birinchi kiradigan manzil
-  kirish_url: "https://online-mahalla.uz/forms/survey_homes/10090563?obl_id=33&area_id=3306&district_id=3306020&street_id=330600447"
+  kirish_url: "https://online-mahalla.uz/tables/survey_homes_street?obl_id=33&area_id=3306&district_id=3306020&street_id=330600447&_mid=3548"
+
+# =====================================================================
+#  XONADONLAR BO'YICHA ISHLASH
+#  Ro'yxat sahifasidagi har bir xonadon (kadastr raqami) ochiladi va
+#  Excel'da shu kadastrga yozilgan odamlar (7-8 ta) bittadan kiritiladi.
+#  Bu bo'limni o'chirsangiz — har bir Excel qatori alohida kiritiladi.
+# =====================================================================
+guruhlash:
+  ustun: "TV_ALP_CADASTRE"      # Excel'dagi xonadon (kadastr) ustuni
+  royxat_url: "https://online-mahalla.uz/tables/survey_homes_street?obl_id=33&area_id=3306&district_id=3306020&street_id=330600447&_mid=3548"
+  royxatdan_olish: true         # faqat ro'yxat sahifasida bor xonadonlar olinadi (butun tuman emas)
+  keyingi_sahifa_selector: null # ro'yxat bir necha sahifali bo'lsa: "keyingi sahifa" tugmasi, masalan "li.next a"
+  max_odam: 0                   # bitta xonadonga ko'pi bilan nechta odam (0 = cheklanmagan)
+  har_odamda_qayta_ochish: false  # true = har bir odamdan oldin xonadon qaytadan ochiladi
+
+  # Xonadonni ochish qadamlari ({TV_ALP_CADASTRE} — shu xonadonning kadastr raqami)
+  xonadon_qadamlar:
+    - amal: ochish
+      url: "https://online-mahalla.uz/tables/survey_homes_street?obl_id=33&area_id=3306&district_id=3306020&street_id=330600447&_mid=3548"
+    - amal: bosish
+      selector: 'text="{TV_ALP_CADASTRE}"'
 
 excel:
   fayl: "Yangi_Pasport_Stol_4_5.xlsx"   # ma'lumotlar fayli (dastur papkasida). Bu fayl o'zgartirilmaydi.
@@ -69,14 +90,15 @@ brauzer:
 #  Selektor: CSS (#id, input[name="x"]), XPath (//button[...]) yoki text=Saqlash
 #
 #  QUYIDAGILAR — NAMUNA. Eng oson yo'li — yozib olish rejimi:
-#      python mahalla_bot.py --yozib_olish 2
-#  (bitta fuqaroni qo'lda kiritasiz, dastur config_yozilgan.yaml ni o'zi yaratadi)
+#      python mahalla_bot.py --yozib_olish
+#  (bitta xonadonni ochib, bitta odamni qo'lda kiritasiz — dastur config_yozilgan.yaml ni o'zi yaratadi)
 # =====================================================================
 
+# Bitta odamni kiritish qadamlari (xonadon ochiq turganda bajariladi)
 qadamlar:
-  # 1) Forma sahifasini ochish
-  - amal: ochish
-    url: "https://online-mahalla.uz/forms/survey_homes/10090563?obl_id=33&area_id=3306&district_id=3306020&street_id=330600447"
+  # 1) Xonadonga odam qo'shish formasini ochish
+  - amal: bosish
+    selector: "text=Qo'shish"
 
   # 2) Maydonlarni to'ldirish (selektorlar — taxminiy, yozib olish rejimida aniqlanadi)
   - amal: yozish

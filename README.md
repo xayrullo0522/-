@@ -30,31 +30,41 @@ Kompyuterda Google Chrome bo'lsa, dastur o'shani ishlatadi.
   ```
 - `JINS` ustuni JSHSHIR'dan avtomatik hisoblanadi (Erkak / Ayol).
 
-## 3. Saytni "o'rgatish" — yozib olish (bir marta)
+## 3. Qanday ishlaydi — xonadonlar bo'yicha
 
-1. **`2_yozib_olish.bat`** ni ishga tushiring, Excel qator raqamini kiriting (masalan `2`).
-2. Qora oynada shu fuqaroning ma'lumotlari chiqadi. Brauzerda saytga kiring va forma sahifasini oching, so'ng **Enter** bosing.
-3. Shu fuqaroni saytga **qo'lda** kiriting: maydonlarni to'ldiring, ro'yxatlardan tanlang, **Saqlash**ni bosing.
+1. Dastur xonadonlar ro'yxati sahifasini (`guruhlash.royxat_url`) ochib, undagi **barcha kadastr raqamlarini** yig'adi.
+2. Excel'dagi odamlarni `TV_ALP_CADASTRE` bo'yicha xonadonlarga ajratadi va **faqat ro'yxatda bor xonadonlarni** oladi
+   (butun tumandagi 32 000 xonadon emas).
+3. Har bir xonadonni ochadi (kadastr raqamini bosadi) va Excel'da shu xonadonga yozilgan odamlarni (7–8 ta) bittadan kiritadi.
+4. Ro'yxat bir necha sahifali bo'lsa, `config.yaml` da `keyingi_sahifa_selector` ni yozing
+   (masalan `"li.next a"` — `5_selektor_aniqlash.bat` bilan "Keyingi" tugmasini ALT+bosib aniqlang).
+
+## 4. Saytni "o'rgatish" — yozib olish (bir marta)
+
+1. **`2_yozib_olish.bat`** ni ishga tushiring.
+2. Brauzerda saytga kiring, so'ng qora oynada **Enter** bosing.
+3. Dastur ro'yxatdagi xonadonlarni tekshirib, Excel'da odami bor xonadonlarni ko'rsatadi va namuna odam taklif qiladi — **Enter** bosing.
+4. **1-bosqich:** ro'yxatda ko'rsatilgan kadastr raqamini bosing (xonadon ochiladi) → qora oynada **Enter**.
+5. **2-bosqich:** shu xonadonga namunadagi odamni **qo'lda** kiriting ("Qo'shish", maydonlar, "Saqlash") → **Enter**.
    Qiymatlarni Excel'dagidek **aynan bir xil** yozing (masalan `IBRAIMOVA`, `15.07.1960`) —
    shunda dastur har bir maydonni qaysi Excel ustunidan olishni o'zi tushunadi.
-4. Tugagach, qora oynada **Enter** bosing. `config_yozilgan.yaml` fayli yaratiladi.
-5. Faylni tekshirib chiqing (Bloknot bilan oching): `ustun:` bog'lanmagan joylarda `qiymat:` turadi —
-   kerak bo'lsa tuzating. So'ng uni **`config.yaml`** nomi bilan saqlang (eskisining o'rniga).
+6. `config_yozilgan.yaml` fayli yaratiladi. Bloknot bilan ochib tekshiring: `ustun:` bog'lanmagan joylarda
+   `qiymat:` turadi — kerak bo'lsa tuzating. So'ng uni **`config.yaml`** nomi bilan saqlang (eskisining o'rniga).
 
 > Qaysidir maydon to'g'ri yozilmasa — **`5_selektor_aniqlash.bat`**: ALT bosib turib maydonga bosing,
 > qora oynada uning selektori chiqadi.
 
-## 4. Sinab ko'rish
+## 5. Sinab ko'rish
 
 **`3_sinov_tasdiq_bilan.bat`** — dastur maydonlarni to'ldiradi, lekin har safar
 saqlashdan oldin sizdan so'raydi. Avval 1–2 ta fuqaroda shunday tekshirib ko'ring.
 
 Faqat ayrim qatorlarni ishlash:
 ```
-python mahalla_bot.py --tekshir --qatorlar 3-4
+python mahalla_bot.py --tekshir --qatorlar 2-20
 ```
 
-## 5. Asosiy ish
+## 6. Asosiy ish
 
 **`4_ishga_tushirish.bat`** — barcha qatorlarni avtomatik kiritadi.
 

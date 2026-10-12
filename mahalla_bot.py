@@ -297,6 +297,20 @@ class Bajaruvchi:
             if self.qadam_pauza:
                 time.sleep(self.qadam_pauza)
 
+    def sahifalab_topish(self, sel: str, keyingi: str, kut: int) -> None:
+        """Element joriy sahifada ko'rinmasa, 'keyingi sahifa' tugmasini bosib qidiradi."""
+        for _ in range(200):
+            try:
+                self.element(sel).wait_for(state="visible", timeout=min(kut, 3000))
+                return
+            except PWTimeout:
+                pass
+            tugma = self.page.locator(keyingi).first
+            if not tugma.is_visible() or not tugma.is_enabled() or "disabled" in (tugma.get_attribute("class") or ""):
+                raise RuntimeError("barcha sahifalar ko'rildi, element topilmadi")
+            tugma.click(timeout=kut)
+            time.sleep(1.5)
+
     def variant_bosish(self, variant_sel: str | None, qiymat: str, kut: int) -> None:
         """Ochilgan ro'yxatdan matni qiymatga teng variantni bosadi (avval aniq, keyin qisman moslik).
         Matn selektorga qo'yilmaydi, shuning uchun Navro'z kabi apostrofli qiymatlar ham ishlaydi."""
@@ -333,6 +347,8 @@ class Bajaruvchi:
             self.page.goto(url, timeout=max(kut, 30000), wait_until="domcontentloaded")
 
         elif amal == "bosish":
+            if q.get("keyingi_sahifa"):
+                self.sahifalab_topish(sel, q["keyingi_sahifa"], kut)
             el = self.element(sel)
             el.wait_for(state="visible", timeout=kut)
             el.scroll_into_view_if_needed(timeout=kut)
@@ -519,6 +535,90 @@ def tanlash_rejimi(context, boshlash_url: str) -> None:
 
 
 # --------------------------------------------------------------------------- #
+#  Xonadonlar bo'yicha ishlash (kadastr raqami -> xonadon -> 7-8 ta odam)
+# --------------------------------------------------------------------------- #
+
+KADASTR_RE = re.compile(r"\b\d{2}:\d{2}:\d{2}:\d{2}:\d{2}:\d{3,5}(?::\d{3,5}){0,2}\b")
+
+
+def kadastr_norm(k) -> str:
+    return re.sub(r"\s+", "", qiymat_matnga(k))
+
+
+def xonadonlarga_ajratish(qatorlar, guruh: dict) -> dict[str, list]:
+    """Excel qatorlarini guruhlash ustuni (kadastr) bo'yicha xonadonlarga ajratadi, tartib saqlanadi."""
+    ustun = guruh.get("ustun", "TV_ALP_CADASTRE")
+    xonadonlar: dict[str, list] = {}
+    for r, q in qatorlar:
+        k = kadastr_norm(q.get(ustun))
+        if k:
+            xonadonlar.setdefault(k, []).append((r, q))
+    return xonadonlar
+
+
+def havola_bilan_ochish(havola: str, xonadon_qadamlar: list[dict]) -> list[dict]:
+    """Xonadon havolasi ma'lum bo'lsa: ro'yxatda qidirib bosish o'rniga to'g'ridan-to'g'ri ochamiz,
+    kadastr bosilgandan keyingi qadamlar (agar bo'lsa) saqlanadi."""
+    keyingi = []
+    for i, q in enumerate(xonadon_qadamlar):
+        if q.get("amal") == "bosish" and "{" in str(q.get("selector", "")):
+            keyingi = xonadon_qadamlar[i + 1:]
+    return [{"amal": "ochish", "url": havola}] + keyingi
+
+
+HAVOLA_JS = r"""(re) => {
+  const rx = new RegExp(re, 'g'); const natija = {};
+  for (const el of document.querySelectorAll('a, td, span, div, button')) {
+    if (el.children.length > 2) continue;
+    const m = (el.innerText || '').match(rx);
+    if (!m || m.length !== 1) continue;
+    const a = el.closest('a[href]') || el.querySelector('a[href]');
+    const href = a && !a.getAttribute('href').startsWith('#') && !a.href.startsWith('javascript') ? a.href : null;
+    if (!(m[0] in natija) || href) natija[m[0]] = href;
+  }
+  return natija;
+}"""
+
+
+def saytdagi_kadastrlar(bajaruvchi: "Bajaruvchi", guruh: dict) -> dict[str, str | None]:
+    """Xonadonlar ro'yxati sahifasidagi barcha kadastr raqamlarini (va havolasini) yig'adi, sahifalab."""
+    page = bajaruvchi.page
+    page.goto(guruh["royxat_url"], wait_until="domcontentloaded")
+    try:
+        page.wait_for_load_state("networkidle", timeout=15000)
+    except PWTimeout:
+        pass
+    kutish = guruh.get("royxat_kutish_selector")
+    if kutish:
+        page.locator(kutish).first.wait_for(timeout=bajaruvchi.kutish_ms)
+    topilgan: dict[str, str | None] = {}
+    keyingi = guruh.get("keyingi_sahifa_selector")
+    for _ in range(int(guruh.get("max_sahifa", 200))):
+        time.sleep(float(guruh.get("sahifa_kutish", 1.5)))
+        oldin = len(topilgan)
+        for k in KADASTR_RE.findall(page.locator("body").inner_text()):
+            topilgan.setdefault(k, None)
+        try:
+            for k, href in page.evaluate(HAVOLA_JS, KADASTR_RE.pattern).items():
+                if href or k not in topilgan:
+                    topilgan[k] = href
+        except PWError:
+            pass
+        if not keyingi:
+            break
+        tugma = page.locator(keyingi).first
+        try:
+            if not tugma.is_visible() or not tugma.is_enabled() or "disabled" in (tugma.get_attribute("class") or ""):
+                break
+            if len(topilgan) == oldin and oldin:
+                break
+            tugma.click(timeout=bajaruvchi.kutish_ms)
+        except PWError:
+            break
+    return topilgan
+
+
+# --------------------------------------------------------------------------- #
 #  Yozib olish rejimi: siz bitta fuqaroni qo'lda kiritasiz — dastur qadamlarni yozadi
 # --------------------------------------------------------------------------- #
 
@@ -610,61 +710,24 @@ def hodisalardan_qadamlar(hodisalar: list[dict], qator: dict, boshlash_url: str)
                     continue
             q = {"amal": "bosish", "selector": h["css"]}
             matn = h.get("matn", "")
+            if ustun:
+                # Masalan kadastr raqami bosildi — har bir qator uchun o'z qiymati bo'yicha bosiladi
+                q["selector"] = f'text="{{{ustun}}}"'
+                q["izoh"] = ustun
+                qadamlar.append(q)
+                continue
             if matn and len(matn) <= 40 and h.get("tag") in ("button", "a") and "\n" not in matn:
                 q["selector"] = f"text={matn}"
             q["izoh"] = matn[:40] if matn else h.get("tag", "")
-            if re.search(r"saqla|сохран|save|yubor|отправ|tasdiq|qo'sh|добав", matn, re.IGNORECASE):
+            if re.search(r"saqla|сохран|save|yubor|отправ|tasdiq", matn, re.IGNORECASE):
                 q["saqlash"] = True
             qadamlar.append(q)
     return qadamlar
 
 
-def yozib_olish_rejimi(context, cfg: dict, cfg_yol: Path, namuna_r: int) -> None:
+def _enter_kutish(context) -> None:
+    """Foydalanuvchi Enter bosguncha brauzer hodisalarini qabul qilib turadi."""
     import threading
-
-    jadval = ExcelJadval(cfg.get("excel", {}))
-    qatorlar = dict(jadval.qatorlar())
-    if namuna_r not in qatorlar:
-        bor = list(qatorlar)[:10]
-        chiqar(f"{namuna_r}-qator topilmadi (filtrni tekshiring). Mavjud qatorlar: {bor} ...")
-        return
-    qator = qatorlar[namuna_r]
-
-    hodisalar: list[dict] = []
-
-    def yozildi(_source, h):
-        hodisalar.append(h)
-        korinish = h.get("qiymat") if h["tur"] != "bosish" else h.get("matn")
-        ustun = ustun_top(korinish or "", qator)
-        chiqar(f"  + {h['tur']:9} {str(korinish)[:40]!r}" + (f"  -> Excel ustuni: {ustun}" if ustun else ""))
-
-    context.expose_binding("__qadamYozildi", yozildi)
-    context.add_init_script(YOZISH_JS)
-    page = joriy_sahifa(context)
-    sayt = cfg.get("sayt", {})
-    if sayt.get("kirish_url"):
-        page.goto(sayt["kirish_url"], wait_until="domcontentloaded")
-
-    chiqar("=" * 60)
-    chiqar("YOZIB OLISH REJIMI")
-    chiqar(f"Namuna — Excel'ning {namuna_r}-qatori:")
-    for nom, v in qator.items():
-        if v not in (None, ""):
-            chiqar(f"    {nom:25} {qiymat_matnga(v)}")
-    chiqar("")
-    chiqar("1) Saytga kiring va fuqaro qo'shiladigan sahifani oching.")
-    input("2) Tayyor bo'lgach shu oynada Enter bosing — yozish boshlanadi... ")
-    boshlash_url = joriy_sahifa(context).url
-    for p in context.pages:
-        try:
-            p.evaluate(YOZISH_JS)
-        except PWError:
-            pass
-    chiqar("3) Endi shu fuqaroni QO'LDA kiriting: maydonlarni to'ldiring, ro'yxatlardan tanlang, Saqlash'ni bosing.")
-    chiqar("   Qiymatlarni yuqoridagi Excel qiymatlari bilan AYNAN bir xil yozing — dastur ularni ustunlarga bog'laydi.")
-    chiqar("4) Tugatgach, shu oynada Enter bosing.")
-    chiqar("-" * 60)
-
     tugadi = threading.Event()
     threading.Thread(target=lambda: (input(), tugadi.set()), daemon=True).start()
     while not tugadi.is_set() and context.pages:
@@ -672,13 +735,106 @@ def yozib_olish_rejimi(context, cfg: dict, cfg_yol: Path, namuna_r: int) -> None
             context.pages[0].wait_for_timeout(200)
         except PWError:
             break
+    try:
+        context.pages[0].wait_for_timeout(500)  # oxirgi hodisalar yetib kelsin
+    except (PWError, IndexError):
+        pass
 
-    qadamlar = hodisalardan_qadamlar(hodisalar, qator, boshlash_url)
+
+def yozib_olish_rejimi(context, cfg: dict, cfg_yol: Path, namuna_r: int) -> None:
+    jadval = ExcelJadval(cfg.get("excel", {}))
+    qatorlar = dict(jadval.qatorlar())
+    guruh = cfg.get("guruhlash") or {}
+    royxat_url = guruh.get("royxat_url")
+
+    joriy = {"qator": {}, "yozish": False}
+    hodisalar: list[dict] = []
+
+    def yozildi(_source, h):
+        if not joriy["yozish"]:
+            return
+        hodisalar.append(h)
+        korinish = h.get("qiymat") if h["tur"] != "bosish" else h.get("matn")
+        ustun = ustun_top(korinish or "", joriy["qator"])
+        chiqar(f"  + {h['tur']:9} {str(korinish)[:40]!r}" + (f"  -> Excel ustuni: {ustun}" if ustun else ""))
+
+    context.expose_binding("__qadamYozildi", yozildi)
+    context.add_init_script(YOZISH_JS)
+    page = joriy_sahifa(context)
+    bosh_url = royxat_url or cfg.get("sayt", {}).get("kirish_url")
+    if bosh_url:
+        page.goto(bosh_url, wait_until="domcontentloaded")
+
+    chiqar("=" * 60)
+    chiqar("YOZIB OLISH REJIMI")
+    input("Brauzerda saytga kiring (login / ERI / OneID), so'ng shu oynada Enter bosing... ")
+
+    if guruh and not namuna_r and royxat_url:
+        # Ro'yxat sahifasidagi xonadonlardan Excel'da odami borlarini taklif qilamiz
+        bajaruvchi = Bajaruvchi(context, cfg.get("brauzer", {}), False)
+        saytdagi = saytdagi_kadastrlar(bajaruvchi, guruh)
+        xonadonlar = xonadonlarga_ajratish(qatorlar.items(), guruh)
+        mos = [(k, v) for k, v in xonadonlar.items() if kadastr_norm(k) in saytdagi]
+        chiqar(f"Ro'yxatda {len(saytdagi)} ta kadastr raqami topildi, Excel'da odami borlari: {len(mos)} ta.")
+        for k, v in mos[:10]:
+            r0, q0 = v[0]
+            ism = " ".join(qiymat_matnga(q0.get(u)) for u in jadval.korsatish)
+            chiqar(f"    {k:32} {len(v)} ta odam, masalan {r0}-qator: {ism}")
+        if not mos:
+            chiqar("Mos xonadon topilmadi. config.yaml dagi guruhlash.royxat_url va Excel faylini tekshiring.")
+            return
+        javob = input(f"Namuna uchun Excel qator raqamini kiriting [Enter = {mos[0][1][0][0]}]: ").strip()
+        namuna_r = int(javob) if javob else mos[0][1][0][0]
+        joriy_sahifa(context).goto(royxat_url, wait_until="domcontentloaded")
+
+    if namuna_r not in qatorlar:
+        chiqar(f"{namuna_r}-qator topilmadi (filtrni tekshiring). Mavjud qatorlar: {list(qatorlar)[:10]} ...")
+        return
+    qator = joriy["qator"] = qatorlar[namuna_r]
+    joriy["yozish"] = True
+    chiqar(f"Namuna — Excel'ning {namuna_r}-qatori:")
+    for nom, v in qator.items():
+        if v not in (None, ""):
+            chiqar(f"    {nom:25} {qiymat_matnga(v)}")
+    chiqar("-" * 60)
+    for p in context.pages:
+        try:
+            p.evaluate(YOZISH_JS)
+        except PWError:
+            pass
+
+    yangi = dict(cfg)
+    if guruh:
+        kadastr = qiymat_matnga(qator.get(guruh.get("ustun", "TV_ALP_CADASTRE")))
+        chiqar(f"1-BOSQICH. Ro'yxatda {kadastr} xonadonini toping va kadastr raqamini bosing")
+        chiqar("           (qidiruv maydoni bo'lsa, unga yozib qidirishingiz mumkin).")
+        chiqar("           Xonadon ochilgach, shu oynada Enter bosing.")
+        bosh = len(hodisalar)
+        _enter_kutish(context)
+        xonadon_qadamlar = hodisalardan_qadamlar(hodisalar[bosh:], qator, royxat_url)
+        for q in xonadon_qadamlar:
+            if q.get("amal") == "bosish" and q.get("izoh") in qator:
+                guruh = dict(guruh, ustun=q["izoh"])
+        bosh = len(hodisalar)
+        chiqar("2-BOSQICH. Endi shu xonadonga namunadagi odamni QO'LDA kiriting:")
+    else:
+        chiqar("Fuqaro qo'shiladigan sahifani oching.")
+        bosh = len(hodisalar)
+        xonadon_qadamlar = None
+    chiqar("   maydonlarni to'ldiring, ro'yxatlardan tanlang, Saqlash'ni bosing.")
+    chiqar("   Qiymatlarni yuqoridagi Excel qiymatlari bilan AYNAN bir xil yozing — dastur ularni ustunlarga bog'laydi.")
+    chiqar("   Tugatgach, shu oynada Enter bosing.")
+    boshlash_url = joriy_sahifa(context).url
+    _enter_kutish(context)
+    qadamlar = hodisalardan_qadamlar(hodisalar[bosh:], qator, "" if guruh else boshlash_url)
+
     if not qadamlar:
         chiqar("Hech qanday harakat yozilmadi.")
         return
-    yangi = dict(cfg)
-    yangi.setdefault("sayt", {})["kirish_url"] = boshlash_url
+    if xonadon_qadamlar is not None:
+        yangi["guruhlash"] = dict(guruh, xonadon_qadamlar=xonadon_qadamlar)
+    else:
+        yangi.setdefault("sayt", {})["kirish_url"] = boshlash_url
     yangi["qadamlar"] = qadamlar
     chiqish = cfg_yol.with_name(cfg_yol.stem + "_yozilgan.yaml")
     with open(chiqish, "w", encoding="utf-8") as f:
@@ -686,10 +842,11 @@ def yozib_olish_rejimi(context, cfg: dict, cfg_yol: Path, namuna_r: int) -> None
         f.write("# yoki:  python mahalla_bot.py --config " + chiqish.name + "\n")
         yaml.safe_dump(yangi, f, allow_unicode=True, sort_keys=False, width=200)
     chiqar("=" * 60)
-    chiqar(f"{len(qadamlar)} ta qadam yozildi: {chiqish}")
-    bog = sum(1 for q in qadamlar if "ustun" in q)
+    hammasi = (xonadon_qadamlar or []) + qadamlar
+    chiqar(f"{len(hammasi)} ta qadam yozildi: {chiqish}")
+    bog = sum(1 for q in hammasi if "ustun" in q or "{" in str(q.get("selector", "")))
     chiqar(f"Shundan {bog} tasi Excel ustunlariga bog'landi. Doimiy (qiymat:) qadamlarni tekshirib chiqing.")
-    chiqar("Sinash:  python mahalla_bot.py --config " + chiqish.name + " --tekshir --qatorlar " + str(namuna_r + 1))
+    chiqar("Sinash:  python mahalla_bot.py --config " + chiqish.name + " --tekshir")
 
 
 # --------------------------------------------------------------------------- #
@@ -703,7 +860,7 @@ def asosiy() -> None:
     ap.add_argument("--tekshir", action="store_true", help="saqlashdan oldin tasdiq so'rash")
     ap.add_argument("--qatorlar", help="faqat shu Excel qatorlari, masalan: 2-10,15")
     ap.add_argument("--hammasi", action="store_true", help="OK bo'lgan qatorlarni ham qayta kiritish")
-    ap.add_argument("--yozib_olish", type=int, metavar="QATOR",
+    ap.add_argument("--yozib_olish", type=int, nargs="?", const=0, metavar="QATOR",
                     help="shu Excel qatoridagi fuqaroni qo'lda kiritasiz, dastur qadamlarni yozib oladi")
     args = ap.parse_args()
 
@@ -718,7 +875,7 @@ def asosiy() -> None:
         if args.tanlash:
             tanlash_rejimi(context, sayt.get("kirish_url", ""))
             return
-        if args.yozib_olish:
+        if args.yozib_olish is not None:
             yozib_olish_rejimi(context, cfg, cfg_yol, args.yozib_olish)
             return
 
@@ -738,49 +895,114 @@ def asosiy() -> None:
         tanlangan = qatorlar_oraligi(args.qatorlar)
         qator_pauza = float(brauzer_cfg.get("qatorlar_orasi", 1))
         xato_skrin = BAZA / "xatolar"
-        ok = xato = otkaz = 0
+        hisob = {"ok": 0, "xato": 0, "otkaz": 0}
 
-        barcha = jadval.qatorlar()
+        barcha = [(r, q) for r, q in jadval.qatorlar() if not tanlangan or r in tanlangan]
         filtr_izoh = " (filtr bo'yicha)" if jadval.filtr else ""
-        chiqar(f"Excel'da {len(barcha)} ta qator topildi{filtr_izoh}. Boshlandi...")
+        chiqar(f"Excel'da {len(barcha)} ta qator topildi{filtr_izoh}.")
         bajaruvchi = Bajaruvchi(context, brauzer_cfg, args.tekshir)
 
-        try:
-            for n, (r, qator) in enumerate(barcha, 1):
-                if tanlangan and r not in tanlangan:
-                    continue
-                if jadval.holat(r).startswith("OK") and not args.hammasi:
-                    otkaz += 1
-                    continue
+        def skrinshot(nom: str) -> None:
+            try:
+                xato_skrin.mkdir(exist_ok=True)
+                bajaruvchi.page.screenshot(path=str(xato_skrin / f"{nom}.png"))
+            except Exception:
+                pass
 
-                nom = " ".join(qiymat_matnga(qator.get(u)) for u in jadval.korsatish)
-                chiqar(f"[{n}/{len(barcha)}] {r}-qator {nom}".rstrip())
-                try:
-                    bajaruvchi.bajar(qadamlar, qator)
-                    jadval.holat_yoz(r, qator, "OK")
-                    ok += 1
-                    chiqar("    ✔ kiritildi")
-                except Exception as e:
-                    xato += 1
-                    xabar = str(e).splitlines()[0][:300]
-                    jadval.holat_yoz(r, qator, f"XATO: {xabar}")
-                    chiqar(f"    ✖ {xabar}")
-                    try:
-                        xato_skrin.mkdir(exist_ok=True)
-                        bajaruvchi.page.screenshot(path=str(xato_skrin / f"qator_{r}.png"))
-                    except Exception:
-                        pass
-                    if brauzer_cfg.get("xatoda_toxtash", False):
-                        input("    Xato. Davom etish uchun Enter bosing (to'xtatish: Ctrl+C)... ")
+        def bitta_odam(r: int, qator: dict, sarlavha: str) -> bool:
+            nom = " ".join(qiymat_matnga(qator.get(u)) for u in jadval.korsatish)
+            chiqar(f"{sarlavha} {r}-qator {nom}".rstrip())
+            try:
+                bajaruvchi.bajar(qadamlar, qator)
+                jadval.holat_yoz(r, qator, "OK")
+                hisob["ok"] += 1
+                chiqar("    ✔ kiritildi")
+                return True
+            except Exception as e:
+                hisob["xato"] += 1
+                xabar = str(e).splitlines()[0][:300]
+                jadval.holat_yoz(r, qator, f"XATO: {xabar}")
+                chiqar(f"    ✖ {xabar}")
+                skrinshot(f"qator_{r}")
+                if brauzer_cfg.get("xatoda_toxtash", False):
+                    input("    Xato. Davom etish uchun Enter bosing (to'xtatish: Ctrl+C)... ")
+                return False
+            finally:
                 time.sleep(qator_pauza)
+
+        def bajarilmagan(qatorlar):
+            natija = []
+            for r, q in qatorlar:
+                if jadval.holat(r).startswith("OK") and not args.hammasi:
+                    hisob["otkaz"] += 1
+                else:
+                    natija.append((r, q))
+            return natija
+
+        try:
+            guruh = cfg.get("guruhlash")
+            if not guruh:
+                for n, (r, qator) in enumerate(bajarilmagan(barcha), 1):
+                    bitta_odam(r, qator, f"[{n}]")
+            else:
+                xonadonlar = xonadonlarga_ajratish(barcha, guruh)
+                if guruh.get("royxatdan_olish", True) and guruh.get("royxat_url"):
+                    saytdagi = saytdagi_kadastrlar(bajaruvchi, guruh)
+                    chiqar(f"Sayt ro'yxatida {len(saytdagi)} ta xonadon (kadastr raqami) topildi.")
+                    if saytdagi:
+                        bor = {k: v for k, v in xonadonlar.items() if kadastr_norm(k) in saytdagi}
+                        havolali = sum(1 for k in bor if saytdagi.get(k))
+                        if havolali and guruh.get("havola_orqali_ochish", True):
+                            chiqar(f"{havolali} ta xonadon havolasi topildi — ular to'g'ridan-to'g'ri ochiladi.")
+                        chiqar(f"Ulardan Excel'da bor: {len(bor)} ta. Faqat shular kiritiladi.")
+                        yoq = sorted(set(saytdagi) - {kadastr_norm(k) for k in xonadonlar})
+                        if yoq:
+                            chiqar(f"Excel'da odami topilmagan xonadonlar ({len(yoq)}): {', '.join(yoq[:15])}"
+                                   + (" ..." if len(yoq) > 15 else ""))
+                        xonadonlar = bor
+                else:
+                    saytdagi = {}
+                eng_kop = int(guruh.get("max_odam") or 0)
+                xonadon_qadamlar = [dict(q) for q in guruh.get("xonadon_qadamlar") or []]
+                for q in xonadon_qadamlar:
+                    if guruh.get("keyingi_sahifa_selector") and q.get("amal") == "bosish" and "{" in str(q.get("selector", "")):
+                        q.setdefault("keyingi_sahifa", guruh["keyingi_sahifa_selector"])
+                for xn, (kadastr, odamlar) in enumerate(xonadonlar.items(), 1):
+                    qoldi = bajarilmagan(odamlar)
+                    if eng_kop:
+                        qoldi = qoldi[:eng_kop]
+                    if not qoldi:
+                        continue
+                    chiqar("=" * 60)
+                    chiqar(f"XONADON {xn}/{len(xonadonlar)}: {kadastr} — {len(qoldi)} ta odam kiritiladi")
+                    ochiq = False
+                    for i, (r, qator) in enumerate(qoldi, 1):
+                        if not ochiq:
+                            try:
+                                havola = saytdagi.get(kadastr) if guruh.get("havola_orqali_ochish", True) else None
+                                if havola:
+                                    bajaruvchi.bajar(havola_bilan_ochish(havola, xonadon_qadamlar), qator)
+                                else:
+                                    bajaruvchi.bajar(xonadon_qadamlar, qator)
+                                ochiq = True
+                            except Exception as e:
+                                xabar = f"xonadon ochilmadi: {str(e).splitlines()[0][:250]}"
+                                chiqar(f"    ✖ {xabar}")
+                                skrinshot(f"xonadon_{kadastr.replace(':', '-')}")
+                                for r2, q2 in qoldi[i - 1:]:
+                                    jadval.holat_yoz(r2, q2, f"XATO: {xabar}")
+                                    hisob["xato"] += 1
+                                break
+                        # Xatodan keyin sahifa holati noma'lum — xonadonni qaytadan ochamiz
+                        ochiq = bitta_odam(r, qator, f"  [{i}/{len(qoldi)}]") and not guruh.get("har_odamda_qayta_ochish", False)
         except KeyboardInterrupt:
             chiqar("\nFoydalanuvchi to'xtatdi.")
         finally:
             jadval.saqlash()
             chiqar("=" * 60)
-            chiqar(f"Tayyor. Muvaffaqiyatli: {ok}, xato: {xato}, avval kiritilgan (o'tkazildi): {otkaz}")
+            chiqar(f"Tayyor. Muvaffaqiyatli: {hisob['ok']}, xato: {hisob['xato']}, avval kiritilgan (o'tkazildi): {hisob['otkaz']}")
             chiqar(f"Natija: {jadval.natija_fayl}")
-            if xato:
+            if hisob["xato"]:
                 chiqar(f"Xato qatorlar rasmlari: {xato_skrin}")
             if not brauzer_cfg.get("yashirin"):
                 try:
