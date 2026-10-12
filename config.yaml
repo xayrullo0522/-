@@ -1,0 +1,134 @@
+# =====================================================================
+#  SOZLAMALAR — shu faylni o'z saytingizga moslab o'zgartirasiz.
+#  Selektorlarni topish uchun:  python mahalla_bot.py --tanlash
+#  (ALT + sichqoncha bosish -> tayyor qatorni shu yerga ko'chirasiz)
+# =====================================================================
+
+sayt:
+  # Dastur ochganda birinchi kiradigan manzil (saytning haqiqiy manzilini yozing)
+  kirish_url: "https://online-mahalla.uz"
+
+excel:
+  fayl: "fuqarolar.xlsx"        # ma'lumotlar fayli (dastur papkasida)
+  varaq: null                   # varaq nomi; null = birinchi/faol varaq
+  sarlavha_qatori: 1            # ustun nomlari qaysi qatorda
+  holat_ustuni: "Holat"         # natija yoziladigan ustun (yo'q bo'lsa qo'shiladi)
+  natija_fayl: null             # null = shu faylning o'ziga yoziladi
+  korsatish_ustunlari: ["Familiya", "Ism"]   # ekranda ko'rsatish uchun
+
+brauzer:
+  kanal: "chrome"               # kompyuterdagi Google Chrome; "msedge" ham bo'ladi
+  profil_papkasi: "brauzer_profil"   # login saqlanib qoladi
+  kutish_soniya: 15             # element chiqishini maksimal kutish
+  qadamlar_orasi: 0.3           # har bir harakat orasidagi pauza (soniya)
+  qatorlar_orasi: 1.0           # har bir fuqaro orasidagi pauza (soniya)
+  xatoda_toxtash: false         # true = xato bo'lsa to'xtab, sizdan so'raydi
+  sekinlashtirish_ms: 0         # kuzatish uchun hamma harakatlarni sekinlashtirish
+
+# =====================================================================
+#  QADAMLAR — har bir Excel qatori (fuqaro) uchun ketma-ket bajariladi.
+#
+#  amal turlari:
+#    ochish     — url ga o'tish                      (url)
+#    bosish     — tugma/havolani bosish               (selector)
+#    yozish     — matn maydoniga yozish               (selector, ustun | qiymat)
+#                   sekin: true  — maskali maydonlar (sana, telefon) uchun
+#                   enter: true / tab: true — yozgandan keyin bosish
+#    tanlash    — oddiy <select> ro'yxatidan tanlash  (selector, ustun)
+#    royxat     — maxsus ochiluvchi ro'yxat           (selector, ustun, [variant_selector])
+#                   yozib_qidirish: true — ochilgach qiymatni yozib qidiradi
+#    belgilash  — checkbox/radio                       (selector, [ustun: ha/yo'q])
+#    fayl       — fayl yuklash                         (selector, ustun = fayl yo'li)
+#    tugma      — klaviatura tugmasi                   (tugma: Enter / Escape / Tab)
+#    kutish     — element chiqishini kutish            (selector | url | holat)
+#    pauza      — oddiy kutish                         (soniya)
+#    tekshirish — selector ko'rinsa XATO deb belgilash (masalan xato xabari)
+#    qolda      — siz qo'lda biror ish qilasiz         (xabar)
+#
+#  Umumiy parametrlar:
+#    ustun:   "Excel ustun nomi"   — qiymat shu ustundan olinadi
+#    qiymat:  "matn {Ustun}"       — doimiy yoki shablon qiymat
+#    format:  "%d.%m.%Y"           — sanalar uchun format
+#    almashtirish: {"E": "Erkak"}  — Excel qiymatini sayt qiymatiga almashtirish
+#    majburiy: false               — xato bo'lsa ham davom etadi
+#    saqlash: true                 — --tekshir rejimida shu qadamdan oldin so'raydi
+#    kutish_soniya: 30             — shu qadam uchun alohida kutish
+#
+#  Selektor: CSS (#id, input[name="x"]), XPath (//button[...]) yoki text=Saqlash
+#
+#  QUYIDAGILAR — NAMUNA. Selektorlarni --tanlash rejimida aniqlab almashtiring!
+# =====================================================================
+
+qadamlar:
+  # 1) Yangi fuqaro qo'shish formasini ochish
+  - amal: ochish
+    url: "https://online-mahalla.uz/citizens/create"
+
+  # yoki ro'yxat sahifasida "Qo'shish" tugmasini bosish:
+  # - amal: bosish
+  #   selector: "text=Qo'shish"
+
+  - amal: kutish
+    selector: "input[name='lastName']"
+
+  # 2) Maydonlarni to'ldirish
+  - amal: yozish
+    selector: "input[name='lastName']"
+    ustun: "Familiya"
+
+  - amal: yozish
+    selector: "input[name='firstName']"
+    ustun: "Ism"
+
+  - amal: yozish
+    selector: "input[name='middleName']"
+    ustun: "Otasining ismi"
+
+  - amal: yozish
+    selector: "input[name='birthDate']"
+    ustun: "Tug'ilgan sana"
+    format: "%d.%m.%Y"
+    sekin: true
+
+  - amal: yozish
+    selector: "input[name='pinfl']"
+    ustun: "JSHSHIR"
+
+  - amal: yozish
+    selector: "input[name='passport']"
+    ustun: "Pasport"
+
+  - amal: tanlash
+    selector: "select[name='gender']"
+    ustun: "Jinsi"
+    almashtirish: {"E": "Erkak", "A": "Ayol"}
+
+  - amal: yozish
+    selector: "input[name='phone']"
+    ustun: "Telefon"
+    sekin: true
+    majburiy: false
+
+  - amal: royxat
+    selector: "#street"
+    ustun: "Ko'cha"
+    yozib_qidirish: true
+    variant_selector: "li"          # variantlar elementi; matni Excel qiymatiga teng bo'lgani bosiladi
+
+  - amal: yozish
+    selector: "input[name='house']"
+    ustun: "Uy raqami"
+
+  # 3) Saqlash
+  - amal: bosish
+    selector: "button[type='submit']"
+    saqlash: true
+
+  # 4) Natijani tekshirish: xato xabari chiqsa — XATO, muvaffaqiyat xabarini kutish
+  - amal: pauza
+    soniya: 1
+  - amal: tekshirish
+    selector: ".error-message, .alert-danger, .ant-message-error"
+  - amal: kutish
+    selector: "text=muvaffaqiyatli"
+    majburiy: false

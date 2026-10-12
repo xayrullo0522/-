@@ -1,0 +1,9 @@
+# Shaxsiy ma'lumotlar va brauzer profili repoga tushmasin
+*.xlsx
+*.xls
+~$*
+brauzer_profil/
+xatolar/
+__pycache__/
+*.pyc
+.venv/
